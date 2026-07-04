@@ -233,6 +233,46 @@ async def get_submissions(cik: str) -> dict:
     return data
 
 
+async def get_recent_filings(
+    cik: str,
+    form_types: list[str] | None = None,
+    limit: int = 10,
+) -> list[dict]:
+    """Return the most recent *limit* filings for *cik*.
+
+    Uses the cached submissions JSON — no extra SEC call.
+    Submissions are already newest-first; returns at most *limit* entries.
+    Filters to *form_types* when provided (e.g. ``['10-K', '10-Q']``);
+    returns all form types when *form_types* is ``None``.
+    """
+    subs = await get_submissions(cik)
+    recent = subs.get("filings", {}).get("recent", {})
+
+    forms: list[str] = recent.get("form", [])
+    filing_dates: list[str] = recent.get("filingDate", [])
+    acc_numbers: list[str] = recent.get("accessionNumber", [])
+    primary_docs: list[str] = recent.get("primaryDocument", [])
+    descriptions: list[str] = recent.get("primaryDocDescription", [])
+
+    results: list[dict] = []
+    for i, form in enumerate(forms):
+        if form_types is not None and form not in form_types:
+            continue
+        results.append(
+            {
+                "form": form,
+                "filingDate": filing_dates[i] if i < len(filing_dates) else "",
+                "accessionNumber": acc_numbers[i] if i < len(acc_numbers) else "",
+                "primaryDocument": primary_docs[i] if i < len(primary_docs) else "",
+                "primaryDocDescription": descriptions[i] if i < len(descriptions) else "",
+            }
+        )
+        if len(results) >= limit:
+            break
+
+    return results
+
+
 async def get_company_facts(cik: str) -> dict:
     """Return all us-gaap XBRL concepts for *cik* with historical values.
 
