@@ -8,8 +8,11 @@ when it needs SEC data.
 
 Public API
 ----------
-resolve_cik(ticker)                       -> str
-get_recent_filings(cik, form_types, limit) -> list[dict]
+resolve_cik(ticker)                            -> str
+get_recent_filings(cik, form_types, limit)     -> list[dict]
+get_company_facts(cik)                         -> dict
+get_filing_sections(cik, form_type, sections)  -> dict
+get_insider_transactions(cik, days)            -> dict
 
 Exceptions
 ----------
@@ -116,20 +119,20 @@ async def get_recent_filings(
     return _check(result, error_cls=EdgarAPIError)
 
 
-async def get_company_facts(ticker: str) -> dict[str, Any]:
-    """Return all XBRL us-gaap facts for *ticker*."""
+async def get_company_facts(cik: str) -> dict[str, Any]:
+    """Return all XBRL us-gaap facts for *cik*."""
     async with _open_session() as session:
-        result = await session.call_tool("get_company_facts", {"ticker": ticker})
+        result = await session.call_tool("get_company_facts", {"cik": cik})
     return _check(result, error_cls=EdgarAPIError)
 
 
 async def get_filing_sections(
-    ticker: str,
+    cik: str,
     form_type: str = "10-K",
     sections: list[str] | None = None,
 ) -> dict[str, str]:
-    """Return narrative sections from *ticker*'s most recent *form_type* filing."""
-    args: dict[str, Any] = {"ticker": ticker, "form_type": form_type}
+    """Return narrative sections from the most recent *form_type* filing for *cik*."""
+    args: dict[str, Any] = {"cik": cik, "form_type": form_type}
     if sections is not None:
         args["sections"] = sections
     async with _open_session() as session:
@@ -138,12 +141,12 @@ async def get_filing_sections(
 
 
 async def get_insider_transactions(
-    ticker: str,
+    cik: str,
     days: int = 90,
 ) -> dict[str, Any]:
-    """Return Form 4 insider transactions and buy/sell summary for *ticker*."""
+    """Return Form 4 insider transactions and buy/sell summary for *cik*."""
     async with _open_session() as session:
         result = await session.call_tool(
-            "get_insider_transactions", {"ticker": ticker, "days": days}
+            "get_insider_transactions", {"cik": cik, "days": days}
         )
     return _check(result, error_cls=EdgarAPIError)

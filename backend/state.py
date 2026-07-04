@@ -13,8 +13,8 @@ from typing import Any, TypedDict
 
 class AgentTraceEntry(TypedDict, total=False):
     node: str
-    tool: str
-    status: str          # 'success' | 'error'
+    tool: str | None     # None on 'skipped' entries where no tool was called
+    status: str          # 'success' | 'error' | 'skipped'
     latency_ms: float    # absent when unknown (e.g. early error path)
 
 
@@ -30,11 +30,12 @@ class DueDiligenceState(TypedDict, total=False):
     errors: list[str]
     agent_trace: list[AgentTraceEntry]
 
-    # ── Populated by each specialist agent ─────────────────────────────────
-    recent_filings: list[dict[str, Any]]
+    # ── Populated by data_agent ─────────────────────────────────────────────
     company_facts: dict[str, Any]
-    filing_sections: dict[str, str]
-    insider_transactions: dict[str, Any]
-    quant_analysis: dict[str, Any]
-    sentiment_analysis: dict[str, Any]
-    risk_assessment: dict[str, Any]
+    filing_sections: dict[str, str]        # {'1A': <text>, '7': <text>}
+    insider_summary: dict[str, Any]        # summary sub-object only (not full txn list)
+
+    # ── Populated by specialist agents ──────────────────────────────────────
+    ratios: dict[str, Any]                 # quant_agent output
+    sentiment: dict[str, Any]             # sentiment_agent output
+    risk_flags: list[dict[str, Any]]      # risk_agent output

@@ -96,19 +96,24 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_company_facts",
             description=(
-                "Return all us-gaap XBRL concepts for a ticker with historical "
+                "Return all us-gaap XBRL concepts for a company with historical "
                 "values by fiscal period.  Use this for quantitative analysis: "
-                "revenue, net income, EPS, debt levels, etc."
+                "revenue, net income, EPS, debt levels, etc. "
+                "Accepts 'ticker' or 'cik' (10-digit zero-padded); prefer 'cik' "
+                "when it is already known to avoid a redundant resolve step."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "ticker": {
                         "type": "string",
-                        "description": "Stock ticker symbol, e.g. 'AAPL'.",
+                        "description": "Stock ticker symbol, e.g. 'AAPL'. Use this or 'cik'.",
+                    },
+                    "cik": {
+                        "type": "string",
+                        "description": "10-digit zero-padded CIK, e.g. '0001045810'. Use this or 'ticker'.",
                     },
                 },
-                "required": ["ticker"],
             },
         ),
         Tool(
@@ -153,7 +158,14 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "ticker": {"type": "string"},
+                    "ticker": {
+                        "type": "string",
+                        "description": "Stock ticker. Use this or 'cik'.",
+                    },
+                    "cik": {
+                        "type": "string",
+                        "description": "10-digit zero-padded CIK. Use this or 'ticker'.",
+                    },
                     "form_type": {
                         "type": "string",
                         "default": "10-K",
@@ -171,7 +183,7 @@ async def list_tools() -> list[Tool]:
                         ),
                     },
                 },
-                "required": ["ticker", "sections"],
+                "required": ["sections"],
             },
         ),
         Tool(
@@ -183,14 +195,20 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "ticker": {"type": "string"},
+                    "ticker": {
+                        "type": "string",
+                        "description": "Stock ticker. Use this or 'cik'.",
+                    },
+                    "cik": {
+                        "type": "string",
+                        "description": "10-digit zero-padded CIK. Use this or 'ticker'.",
+                    },
                     "days": {
                         "type": "integer",
                         "default": 90,
                         "description": "Lookback window in days (default 90).",
                     },
                 },
-                "required": ["ticker"],
             },
         ),
     ]
@@ -209,8 +227,14 @@ async def _impl_resolve_cik(ticker: str) -> str:
     return await _resolve(ticker)
 
 
-async def _impl_get_company_facts(ticker: str) -> Any:
-    cik = await _resolve(ticker)
+async def _impl_get_company_facts(
+    ticker: str | None = None,
+    cik: str | None = None,
+) -> Any:
+    if cik is None and ticker is None:
+        raise ValueError("Either 'ticker' or 'cik' must be provided.")
+    if cik is None:
+        cik = await _resolve(ticker)  # type: ignore[arg-type]
     return await _edgar_company_facts(cik)
 
 
@@ -228,15 +252,19 @@ async def _impl_get_recent_filings(
 
 
 async def _impl_get_filing_sections(
-    ticker: str,
+    ticker: str | None = None,
+    cik: str | None = None,
     form_type: str = "10-K",
     sections: list[str] | None = None,
 ) -> Any:
-    cik = await _resolve(ticker)
+    if cik is None and ticker is None:
+        raise ValueError("Either 'ticker' or 'cik' must be provided.")
+    if cik is None:
+        cik = await _resolve(ticker)  # type: ignore[arg-type]
 
     filings = await _edgar_recent_filings(cik, [form_type], limit=1)
     if not filings:
-        raise ValueError(f"No {form_type!r} filings found for {ticker!r}")
+        raise ValueError(f"No {form_type!r} filings found for CIK {cik!r}")
 
     accession = filings[0]["accessionNumber"]
     result: dict[str, str] = {}
@@ -255,8 +283,15 @@ async def _impl_get_filing_sections(
     return result
 
 
-async def _impl_get_insider_transactions(ticker: str, days: int = 90) -> Any:
-    cik = await _resolve(ticker)
+async def _impl_get_insider_transactions(
+    ticker: str | None = None,
+    cik: str | None = None,
+    days: int = 90,
+) -> Any:
+    if cik is None and ticker is None:
+        raise ValueError("Either 'ticker' or 'cik' must be provided.")
+    if cik is None:
+        cik = await _resolve(ticker)  # type: ignore[arg-type]
     return await _get_insider_transactions(cik, days)
 
 
