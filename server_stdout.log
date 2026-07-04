@@ -1,0 +1,24 @@
+INFO:     127.0.0.1:61287 - "GET /mcp HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:61287 - "GET /mcp/ HTTP/1.1" 406 Not Acceptable
+INFO:     127.0.0.1:62534 - "POST /mcp HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:62534 - "POST /mcp/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62536 - "POST /mcp HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:62536 - "POST /mcp/ HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:62538 - "POST /mcp HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:62538 - "POST /mcp/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62541 - "POST /mcp HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:62541 - "POST /mcp/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62543 - "POST /mcp HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:62543 - "POST /mcp/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62545 - "POST /mcp HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:62545 - "POST /mcp/ HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:62547 - "POST /mcp HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:62547 - "POST /mcp/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62549 - "POST /mcp HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:62549 - "POST /mcp/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62551 - "POST /mcp HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:62551 - "POST /mcp/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62553 - "POST /mcp HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:62553 - "POST /mcp/ HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:62555 - "POST /mcp HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:62555 - "POST /mcp/ HTTP/1.1" 200 OK

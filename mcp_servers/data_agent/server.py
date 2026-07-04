@@ -76,6 +76,24 @@ mcp = Server("data-agent")
 async def list_tools() -> list[Tool]:
     return [
         Tool(
+            name="resolve_cik",
+            description=(
+                "Resolve a ticker symbol to its 10-digit SEC EDGAR CIK string. "
+                "Call this once per session to obtain the CIK before calling "
+                "tools that accept a 'cik' parameter directly."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "ticker": {
+                        "type": "string",
+                        "description": "Stock ticker symbol, e.g. 'NVDA'.",
+                    },
+                },
+                "required": ["ticker"],
+            },
+        ),
+        Tool(
             name="get_company_facts",
             description=(
                 "Return all us-gaap XBRL concepts for a ticker with historical "
@@ -96,14 +114,22 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_recent_filings",
             description=(
-                "List recent SEC filings for a ticker, optionally filtered by "
-                "form type.  Returns accession numbers, dates, and primary document "
-                "paths needed by other tools."
+                "List recent SEC filings, optionally filtered by form type. "
+                "Accepts either 'ticker' (resolved internally) or 'cik' (10-digit "
+                "zero-padded string, skips an extra resolve step). "
+                "Returns accession numbers, dates, and primary document paths."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "ticker": {"type": "string"},
+                    "ticker": {
+                        "type": "string",
+                        "description": "Stock ticker, e.g. 'AAPL'. Use this or 'cik', not both.",
+                    },
+                    "cik": {
+                        "type": "string",
+                        "description": "10-digit zero-padded CIK, e.g. '0001045810'. Use this or 'ticker'.",
+                    },
                     "form_types": {
                         "type": "array",
                         "items": {"type": "string"},
@@ -115,7 +141,6 @@ async def list_tools() -> list[Tool]:
                         "description": "Maximum number of filings to return.",
                     },
                 },
-                "required": ["ticker"],
             },
         ),
         Tool(
@@ -180,17 +205,25 @@ async def _resolve(ticker: str) -> str:
     return await resolve_cik(ticker.upper().strip())
 
 
+async def _impl_resolve_cik(ticker: str) -> str:
+    return await _resolve(ticker)
+
+
 async def _impl_get_company_facts(ticker: str) -> Any:
     cik = await _resolve(ticker)
     return await _edgar_company_facts(cik)
 
 
 async def _impl_get_recent_filings(
-    ticker: str,
+    ticker: str | None = None,
+    cik: str | None = None,
     form_types: list[str] | None = None,
     limit: int = 10,
 ) -> Any:
-    cik = await _resolve(ticker)
+    if cik is None and ticker is None:
+        raise ValueError("Either 'ticker' or 'cik' must be provided.")
+    if cik is None:
+        cik = await _resolve(ticker)  # type: ignore[arg-type]
     return await _edgar_recent_filings(cik, form_types, limit)
 
 
@@ -232,6 +265,7 @@ async def _impl_get_insider_transactions(ticker: str, days: int = 90) -> Any:
 # ---------------------------------------------------------------------------
 
 _TOOLS: dict[str, Any] = {
+    "resolve_cik": _impl_resolve_cik,
     "get_company_facts": _impl_get_company_facts,
     "get_recent_filings": _impl_get_recent_filings,
     "get_filing_sections": _impl_get_filing_sections,
