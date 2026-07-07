@@ -52,7 +52,7 @@ from starlette.routing import Mount
 from shared.audit_log import make_params_hash, record as _audit_record
 from mcp_clients.data_client import get_company_facts as _get_company_facts
 from mcp_clients.data_client import resolve_cik as _resolve_cik
-from mcp_servers.quant_agent.tools.ratios import compare_peers, compute_ratios
+from mcp_servers.quant_agent.tools.ratios import compare_peers, compute_ratios, get_ratio_history
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +119,34 @@ async def list_tools() -> list[Tool]:
                 "required": ["ticker", "peer_tickers"],
             },
         ),
+        Tool(
+            name="get_ratio_history",
+            description=(
+                "Return debt-to-equity ratio for each of the last N annual 10-K "
+                "filing periods, sorted oldest-to-newest. "
+                "Used by the Risk Agent to detect multi-period debt spikes. "
+                "Returns [{period_end: YYYY-MM-DD, debt_to_equity: float|null}, ...]."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "ticker": {
+                        "type": "string",
+                        "description": "Stock ticker symbol.",
+                    },
+                    "cik": {
+                        "type": "string",
+                        "description": "10-digit CIK if already known (skips resolve_cik).",
+                    },
+                    "periods": {
+                        "type": "integer",
+                        "default": 4,
+                        "description": "Number of annual periods to return (default 4).",
+                    },
+                },
+                "required": ["ticker"],
+            },
+        ),
     ]
 
 
@@ -137,9 +165,20 @@ async def _impl_compare_peers(ticker: str, peer_tickers: list[str]) -> Any:
     return await compare_peers(ticker, peer_tickers)
 
 
+async def _impl_get_ratio_history(
+    ticker: str,
+    cik: str | None = None,
+    periods: int = 4,
+) -> Any:
+    resolved_cik = cik or await _resolve_cik(ticker)
+    company_facts = await _get_company_facts(resolved_cik)
+    return get_ratio_history(company_facts, periods=periods)
+
+
 _TOOLS: dict[str, Any] = {
     "compute_ratios": _impl_compute_ratios,
     "compare_peers": _impl_compare_peers,
+    "get_ratio_history": _impl_get_ratio_history,
 }
 
 

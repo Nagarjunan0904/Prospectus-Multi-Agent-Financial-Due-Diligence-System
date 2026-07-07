@@ -417,6 +417,66 @@ async def compute_ratios(
 
 
 # ---------------------------------------------------------------------------
+# get_ratio_history
+# ---------------------------------------------------------------------------
+
+def get_ratio_history(company_facts: dict, periods: int = 4) -> list[dict]:
+    """Return D/E ratio for each of the last *periods* annual 10-K filings.
+
+    Uses the same XBRL concepts as ``compute_ratios`` (LongTermDebtNoncurrent
+    + LongTermDebtCurrent, falling back to LongTermDebt when the split is
+    absent).  Period-end dates are driven by the equity denominator — only
+    periods where StockholdersEquity is present are included.
+
+    Returns [{"period_end": "YYYY-MM-DD", "debt_to_equity": float | None}, ...]
+    sorted oldest-to-newest.  Callers with fewer historical filings than
+    ``periods`` receive a shorter list; never errors.
+    """
+    def _by_period_end(entries: list[dict]) -> dict[str, float]:
+        """Index entries by period-end date; prefer the most recently filed value."""
+        best: dict[str, dict] = {}
+        for e in entries:
+            end = e["end"]
+            if end not in best or e.get("filed", "") > best[end].get("filed", ""):
+                best[end] = e
+        return {end: e["val"] for end, e in best.items()}
+
+    eq_entries = _get_entries(company_facts, "StockholdersEquity", form="10-K")
+    if not eq_entries:
+        eq_entries = _get_entries(
+            company_facts, "StockholdersEquityAttributableToParent", form="10-K"
+        )
+    eq_map = _by_period_end(eq_entries)
+
+    nc_map  = _by_period_end(_get_entries(company_facts, "LongTermDebtNoncurrent", form="10-K"))
+    cu_map  = _by_period_end(_get_entries(company_facts, "LongTermDebtCurrent",    form="10-K"))
+    tot_map = _by_period_end(_get_entries(company_facts, "LongTermDebt",           form="10-K"))
+
+    # Select the most recent `periods` fiscal year-ends present in equity
+    period_ends = sorted(eq_map.keys(), reverse=True)[:periods]
+
+    result: list[dict] = []
+    for end_date in sorted(period_ends):  # oldest → newest
+        equity = eq_map.get(end_date)
+        nc = nc_map.get(end_date)
+        cu = cu_map.get(end_date)
+
+        if nc is None and cu is None:
+            total_debt = tot_map.get(end_date, 0.0)
+        else:
+            total_debt = (nc or 0.0) + (cu or 0.0)
+
+        if equity is None or equity == 0:
+            dte: float | None = None
+        else:
+            dte = round(total_debt / equity, 4)
+
+        result.append({"period_end": end_date, "debt_to_equity": dte})
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # compare_peers
 # ---------------------------------------------------------------------------
 
