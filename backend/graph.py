@@ -1,19 +1,27 @@
 """
-LangGraph due-diligence graph — wires the five agent nodes together and
+LangGraph due-diligence graph — wires all seven agent nodes together and
 attaches a PostgreSQL checkpointer for resumability.
 
 Graph topology
 --------------
 
-    supervisor ──► data_agent ──┬──► quant_agent ──► risk_agent ──► END
-                                └──► sentiment_agent ──────────────► END
+    supervisor ──► data_agent ──┬──► quant_agent ──► risk_agent ──┐
+                                └──► sentiment_agent ──────────────┤
+                                                                   ▼
+                                                            memo_writer
+                                                                   │
+                                                            self_critic
+                                                           ╱           ╲
+                                                    (retry=None)  (retry=node)
+                                                         │               │
+                                                        END         that node ──► ...
 
 data_agent fans out to quant_agent and sentiment_agent in parallel.
-risk_agent runs after quant_agent completes (needs ratio_history).
-sentiment_agent converges at END independently.
-
-# TODO Phase 4: replace END with memo_writer node + conditional retry edges
-# on both risk_agent and sentiment_agent once the memo_writer is implemented.
+risk_agent runs after quant_agent (needs ratio_history).
+Both risk_agent and sentiment_agent converge at memo_writer.
+self_critic either ends the run (retry_agent is None) or routes back to
+the agent that produced the most ungrounded claims (or memo_writer itself
+when completeness is the only issue).
 
 Checkpointing
 -------------
@@ -30,20 +38,27 @@ Usage
             {"ticker": "NVDA"},
             config={"configurable": {"thread_id": "run-nvda-001"}},
         )
+    memo  = state.get("memo")       # InvestmentMemo.model_dump() or None
+    retry = state.get("retry_agent")  # None when self_critic approved the memo
 """
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 from typing import AsyncGenerator
+
+_log = logging.getLogger(__name__)
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, START, StateGraph
 
 from backend.agents import (
     data_agent,
+    memo_writer,
     quant_agent,
     risk_agent,
+    self_critic,
     sentiment_agent,
     supervisor,
 )
@@ -54,6 +69,37 @@ from backend.state import DueDiligenceState
 # Graph builder (configured at import time; compiled at runtime with saver)
 # ---------------------------------------------------------------------------
 
+MAX_RETRIES = 2  # blueprint spec 7.4: cap the self_critic → upstream retry loop
+
+_RETRYABLE_NODES = frozenset(
+    {"quant_agent", "sentiment_agent", "risk_agent", "data_agent", "memo_writer"}
+)
+
+
+def _route_self_critic(state: DueDiligenceState) -> str:
+    """Conditional edge out of self_critic.
+
+    Returns the name of the node to run next:
+      • END          -- memo is acceptable (retry_agent is None), OR
+                        the retry cap (MAX_RETRIES) has been reached
+      • <node_name>  -- re-run that upstream node (then flow continues
+                        through the graph back to self_critic)
+
+    Unknown node names and cap-exceeded cases both fall back to END.
+    """
+    retry = state.get("retry_agent")
+    if retry and retry in _RETRYABLE_NODES:
+        count = state.get("retry_count", 0)
+        if count < MAX_RETRIES:
+            return retry
+        _log.warning(
+            "self_critic: retry cap reached (%d/%d) for retry_agent=%r — "
+            "accepting memo as low-confidence result",
+            count, MAX_RETRIES, retry,
+        )
+    return END
+
+
 _builder = StateGraph(DueDiligenceState)
 
 _builder.add_node("supervisor",       supervisor.run)
@@ -61,19 +107,29 @@ _builder.add_node("data_agent",       data_agent.run)
 _builder.add_node("quant_agent",      quant_agent.run)
 _builder.add_node("sentiment_agent",  sentiment_agent.run)
 _builder.add_node("risk_agent",       risk_agent.run)
+_builder.add_node("memo_writer",      memo_writer.run)
+_builder.add_node("self_critic",      self_critic.run)
 
 # Sequential spine
 _builder.add_edge(START,          "supervisor")
 _builder.add_edge("supervisor",   "data_agent")
 
 # Fan-out: data_agent → quant_agent and sentiment_agent in parallel
-_builder.add_edge("data_agent", "quant_agent")
-_builder.add_edge("data_agent", "sentiment_agent")
+_builder.add_edge("data_agent",       "quant_agent")
+_builder.add_edge("data_agent",       "sentiment_agent")
 
-# quant_agent feeds risk_agent; sentiment_agent is a leaf for now
+# quant_agent feeds risk_agent (needs ratio_history)
 _builder.add_edge("quant_agent",     "risk_agent")
-_builder.add_edge("sentiment_agent", END)   # TODO Phase 4: replace END with memo_writer
-_builder.add_edge("risk_agent",      END)   # TODO Phase 4: replace END with memo_writer
+
+# Both parallel branches converge at memo_writer
+_builder.add_edge("sentiment_agent", "memo_writer")
+_builder.add_edge("risk_agent",      "memo_writer")
+
+# memo_writer feeds self_critic
+_builder.add_edge("memo_writer",     "self_critic")
+
+# Conditional exit: self_critic either ends or retries an upstream node
+_builder.add_conditional_edges("self_critic", _route_self_critic)
 
 
 # ---------------------------------------------------------------------------

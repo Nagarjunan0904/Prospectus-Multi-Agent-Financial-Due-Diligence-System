@@ -27,9 +27,12 @@ import json
 import os
 from typing import Any
 
+from dotenv import load_dotenv
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import CallToolResult
+
+load_dotenv()
 
 
 # ---------------------------------------------------------------------------

@@ -14,7 +14,7 @@ data_agent).
 Node return contract
 --------------------
 Every node MUST return only the keys it modified, and MUST include only
-NEW items in ``errors`` / ``agent_trace`` — not the full accumulated list.
+NEW items in ``errors`` / ``agent_trace`` -- not the full accumulated list.
 The Annotated reducer handles concatenation; returning the full list
 would double earlier entries.
 """
@@ -32,28 +32,41 @@ class AgentTraceEntry(TypedDict, total=False):
 
 
 class DueDiligenceState(TypedDict, total=False):
-    # ── Inputs ──────────────────────────────────────────────────────────────
+    # Inputs
     ticker: str
 
-    # ── Set by supervisor ───────────────────────────────────────────────────
+    # Set by supervisor
     cik: str | None
     required_agents: list[str]
 
-    # ── Accumulated by every node (operator.add merges parallel updates) ────
+    # Accumulated by every node (operator.add merges parallel updates)
     errors: Annotated[list[str], operator.add]
     agent_trace: Annotated[list[AgentTraceEntry], operator.add]
 
-    # ── Populated by data_agent ─────────────────────────────────────────────
+    # Populated by data_agent
     company_facts: dict[str, Any]
     filing_sections: dict[str, str]        # {'1A': <text>, '7': <text>}
     insider_summary: dict[str, Any]        # summary sub-object only (not full txn list)
 
-    # ── Populated by quant_agent ────────────────────────────────────────────
+    # Populated by quant_agent
     ratios: dict[str, Any]                 # compute_ratios output
     ratio_history: list[dict[str, Any]]    # get_ratio_history output; consumed by risk_agent
 
-    # ── Populated by sentiment_agent ────────────────────────────────────────
+    # Populated by sentiment_agent
     sentiment: dict[str, Any]
 
-    # ── Populated by risk_agent ─────────────────────────────────────────────
+    # Populated by risk_agent
     risk_flags: list[dict[str, Any]]
+
+    # Populated by memo_writer
+    # InvestmentMemo.model_dump() -- plain dict so psycopg3 can checkpoint it.
+    # None when absent (ticker resolution failed) or when the LLM call errored.
+    memo: dict[str, Any] | None
+
+    # Populated by self_critic
+    # None = memo is acceptable, no retry needed.
+    # str  = name of the graph node that should be re-run (e.g. "quant_agent").
+    retry_agent: str | None
+    # Incremented by self_critic each time it requests a retry.
+    # _route_self_critic enforces MAX_RETRIES and returns END when reached.
+    retry_count: int
