@@ -2,13 +2,18 @@
 Data Agent node — fetches all SEC EDGAR data for a given company.
 
 Makes three MCP tool calls per run (happy path):
-  get_company_facts     -> state['company_facts']
-  get_filing_sections   -> state['filing_sections']
+  get_company_facts        -> state['company_facts']
+  get_filing_sections      -> state['filing_sections']
   get_insider_transactions -> state['insider_summary']  (summary only)
 
 Each call is traced individually.  Failures are soft: they append to
 state['errors'] and leave the corresponding state field as an empty
 dict, so downstream agents receive a defined (if empty) value.
+
+Return contract
+---------------
+Returns ONLY the keys this node sets, with ONLY NEW items in
+``errors`` / ``agent_trace``.  Never spreads ``{**state, ...}``.
 """
 from __future__ import annotations
 
@@ -40,14 +45,14 @@ def _append_trace(
     agent_trace.append(entry)
 
 
-async def run(state: DueDiligenceState) -> DueDiligenceState:
-    agent_trace: list[AgentTraceEntry] = list(state.get("agent_trace") or [])
-    errors: list[str] = list(state.get("errors") or [])
+async def run(state: DueDiligenceState) -> dict[str, Any]:
+    errors: list[str] = []                    # only NEW errors from this node
+    agent_trace: list[AgentTraceEntry] = []   # only NEW trace entries from this node
 
     # ── Step 1: skip check ───────────────────────────────────────────────────
     if "data_agent" not in (state.get("required_agents") or []):
         _append_trace(agent_trace, None, "skipped")
-        return {**state, "agent_trace": agent_trace}
+        return {"agent_trace": agent_trace}
 
     cik: str = state["cik"]  # type: ignore[assignment]  # guaranteed by supervisor
 
@@ -76,7 +81,6 @@ async def run(state: DueDiligenceState) -> DueDiligenceState:
     except EdgarAPIError as exc:
         errors.append(f"get_recent_filings (form_type detection): {exc}")
         _log.warning("data_agent: form_type detection failed (CIK %s) — %s", cik, exc)
-        # form_type stays None → step 4 skipped
 
     # ── Step 4: filing sections ──────────────────────────────────────────────
     filing_sections: dict[str, str] = {}
@@ -114,10 +118,9 @@ async def run(state: DueDiligenceState) -> DueDiligenceState:
         _log.warning("data_agent: get_insider_transactions failed (CIK %s) — %s", cik, exc)
 
     return {
-        **state,
-        "company_facts": company_facts,
+        "company_facts":  company_facts,
         "filing_sections": filing_sections,
         "insider_summary": insider_summary,
-        "errors": errors,
-        "agent_trace": agent_trace,
+        "errors":          errors,
+        "agent_trace":     agent_trace,
     }

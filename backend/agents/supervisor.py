@@ -11,8 +11,14 @@ Responsibilities
 4. Record every tool invocation (success and failure) as AgentTraceEntry
    in state['agent_trace'].
 
-This node intentionally makes NO direct imports from edgar_client.py or any
-other data-agent internal — all SEC data goes through the MCP client.
+Return contract
+---------------
+This node returns ONLY the keys it sets, and ONLY NEW items in
+``errors`` / ``agent_trace``.  The graph's operator.add reducer handles
+concatenation with previous entries.  Never spread ``{**state, ...}``.
+
+This node intentionally makes NO direct imports from edgar_client.py or
+any other data-agent internal — all SEC data goes through the MCP client.
 """
 from __future__ import annotations
 
@@ -41,11 +47,11 @@ def _append_trace(
     agent_trace.append(entry)
 
 
-async def run(state: DueDiligenceState) -> DueDiligenceState:
+async def run(state: DueDiligenceState) -> dict[str, Any]:
     """LangGraph node: resolve ticker, gate quant agent, populate required_agents."""
     ticker: str = state["ticker"]
-    errors: list[str] = list(state.get("errors") or [])
-    agent_trace: list[AgentTraceEntry] = list(state.get("agent_trace") or [])
+    errors: list[str] = []                    # only NEW errors from this node
+    agent_trace: list[AgentTraceEntry] = []   # only NEW trace entries from this node
 
     # ── Step 1: resolve ticker → CIK ────────────────────────────────────────
     t0 = time.monotonic()
@@ -60,7 +66,6 @@ async def run(state: DueDiligenceState) -> DueDiligenceState:
         errors.append(str(exc))
         _log.warning("supervisor: unknown ticker %r — %s", ticker, exc)
         return {
-            **state,
             "cik": None,
             "required_agents": [],
             "errors": errors,
@@ -98,9 +103,6 @@ async def run(state: DueDiligenceState) -> DueDiligenceState:
         )
 
     # ── Step 4: gate quant_agent ─────────────────────────────────────────────
-    # Quant analysis requires at least one 10-K or 10-Q with XBRL-backed data.
-    # If the filing fetch errored OR returned nothing, exclude quant_agent so
-    # the graph doesn't run a node that will inevitably produce empty output.
     if not filings_ok or not filings:
         required_agents = [a for a in required_agents if a != "quant_agent"]
         _log.info(
@@ -108,7 +110,6 @@ async def run(state: DueDiligenceState) -> DueDiligenceState:
         )
 
     return {
-        **state,
         "cik": cik,
         "required_agents": required_agents,
         "errors": errors,
