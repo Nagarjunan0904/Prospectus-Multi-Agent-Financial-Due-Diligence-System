@@ -157,18 +157,20 @@ async def run(state: DueDiligenceState) -> dict[str, Any]:
             _append_trace(agent_trace, None, "retry-memo_writer")
             _log.info("self_critic: memo is None but company_facts present — retrying memo_writer")
             return {
-                "retry_agent": "memo_writer",
-                "retry_count": new_count,
-                "agent_trace": agent_trace,
-                "errors":      errors,
+                "retry_agent":      "memo_writer",
+                "retry_count":      new_count,
+                "citation_coverage": 0.0,
+                "agent_trace":      agent_trace,
+                "errors":           errors,
             }
         else:
             # Upstream data entirely absent — nothing to evaluate
             _append_trace(agent_trace, None, "skipped")
             _log.info("self_critic: skipping — memo and company_facts both absent")
             return {
-                "retry_agent": None,
-                "agent_trace": agent_trace,
+                "retry_agent":      None,
+                "citation_coverage": 0.0,
+                "agent_trace":      agent_trace,
             }
 
     t0 = time.monotonic()
@@ -188,14 +190,22 @@ async def run(state: DueDiligenceState) -> dict[str, Any]:
                 agent = _agent_for_field(claim.get("source_field", ""))
                 ungrounded_by_agent[agent] = ungrounded_by_agent.get(agent, 0) + 1
 
-    # ── Completeness check ───────────────────────────────────────────────────
+    # ── Completeness + coverage ──────────────────────────────────────────────
     completeness = _section_completeness(memo)
+    grounded_claims = total_claims - ungrounded_total
+    citation_coverage = round(
+        0.6 * (grounded_claims / total_claims if total_claims else 0.0)
+        + 0.4 * completeness,
+        4,
+    )
 
     latency_ms = (time.monotonic() - t0) * 1000
 
     _log.info(
-        "self_critic: %d/%d claims grounded, completeness %.2f, ungrounded_by_agent=%s",
-        total_claims - ungrounded_total, total_claims, completeness, ungrounded_by_agent,
+        "self_critic: %d/%d claims grounded, completeness %.2f, "
+        "citation_coverage=%.4f, ungrounded_by_agent=%s",
+        grounded_claims, total_claims, completeness,
+        citation_coverage, ungrounded_by_agent,
     )
 
     # ── Routing decision ─────────────────────────────────────────────────────
@@ -204,9 +214,10 @@ async def run(state: DueDiligenceState) -> dict[str, Any]:
     if not needs_retry:
         _append_trace(agent_trace, None, "success", latency_ms)
         return {
-            "retry_agent": None,
-            "agent_trace": agent_trace,
-            "errors":      errors,
+            "retry_agent":       None,
+            "citation_coverage": citation_coverage,
+            "agent_trace":       agent_trace,
+            "errors":            errors,
         }
 
     # Determine which node to retry
@@ -224,14 +235,15 @@ async def run(state: DueDiligenceState) -> dict[str, Any]:
     new_count = state.get("retry_count", 0) + 1
     errors.append(
         f"self_critic: retry={retry_agent} #{new_count} "
-        f"(completeness={completeness:.2f}, ungrounded={ungrounded_total}/{total_claims}, "
-        f"by_agent={ungrounded_by_agent})"
+        f"(completeness={completeness:.2f}, citation_coverage={citation_coverage:.4f}, "
+        f"ungrounded={ungrounded_total}/{total_claims}, by_agent={ungrounded_by_agent})"
     )
     _append_trace(agent_trace, None, f"retry-{retry_agent}", latency_ms)
 
     return {
-        "retry_agent": retry_agent,
-        "retry_count": new_count,
-        "agent_trace": agent_trace,
-        "errors":      errors,
+        "retry_agent":       retry_agent,
+        "retry_count":       new_count,
+        "citation_coverage": citation_coverage,
+        "agent_trace":       agent_trace,
+        "errors":            errors,
     }

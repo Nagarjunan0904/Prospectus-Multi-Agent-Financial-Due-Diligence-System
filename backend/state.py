@@ -70,3 +70,6 @@ class DueDiligenceState(TypedDict, total=False):
     # Incremented by self_critic each time it requests a retry.
     # _route_self_critic enforces MAX_RETRIES and returns END when reached.
     retry_count: int
+    # 0.6 * grounded_fraction + 0.4 * section_completeness; set by self_critic.
+    # 0.0 when memo was never produced (company_facts absent or LLM failed).
+    citation_coverage: float

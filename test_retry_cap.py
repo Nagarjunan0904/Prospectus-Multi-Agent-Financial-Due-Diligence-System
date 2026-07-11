@@ -307,6 +307,83 @@ async def test_cap_end_to_end() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Graph-structure tests: defer=True fan-in fix (no DB or MCP needed)
+# ---------------------------------------------------------------------------
+
+def test_memo_writer_deferred() -> None:
+    """
+    memo_writer must carry defer=True because it has two predecessors that arrive
+    in different supersteps (sentiment_agent at depth N+2, risk_agent at depth N+3).
+    Without defer=True, LangGraph fires memo_writer once per superstep a predecessor
+    settles in, causing two LLM calls per run.
+    """
+    from langgraph.graph._node import StateNodeSpec
+    from backend.graph import _builder
+
+    node_spec = _builder.nodes["memo_writer"]
+    assert isinstance(node_spec, StateNodeSpec), (
+        f"FAIL: expected StateNodeSpec, got {type(node_spec)}"
+    )
+    assert node_spec.defer is True, (
+        f"FAIL: memo_writer.defer is {node_spec.defer!r}, expected True\n"
+        f"  Without defer=True memo_writer fires twice per run (once when "
+        f"sentiment_agent finishes, once when risk_agent finishes)."
+    )
+    print("  [PASS] memo_writer has defer=True — will wait for all predecessors")
+
+
+def test_self_critic_not_deferred() -> None:
+    """self_critic has exactly one predecessor (memo_writer); defer=True not needed."""
+    from langgraph.graph._node import StateNodeSpec
+    from backend.graph import _builder
+
+    node_spec = _builder.nodes["self_critic"]
+    assert isinstance(node_spec, StateNodeSpec)
+    # defer is False by default and should remain so — self_critic is not a fan-in node
+    assert node_spec.defer is False, (
+        f"FAIL: self_critic.defer is {node_spec.defer!r}, expected False"
+    )
+    print("  [PASS] self_critic has defer=False — single predecessor, no fan-in issue")
+
+
+def test_only_memo_writer_is_fan_in() -> None:
+    """Structural check: memo_writer is the ONLY node with multiple incoming edges."""
+    from collections import defaultdict
+    from backend.graph import _builder
+
+    in_edges: dict[str, list[str]] = defaultdict(list)
+    for src, dst in _builder.edges:
+        if src != "__start__":
+            in_edges[dst].append(src)
+
+    fan_in_nodes = {node: preds for node, preds in in_edges.items() if len(preds) > 1}
+    assert set(fan_in_nodes.keys()) == {"memo_writer"}, (
+        f"FAIL: expected only memo_writer to be a fan-in node, "
+        f"got {set(fan_in_nodes.keys())}\n"
+        f"  Any new fan-in node with asymmetric predecessors may also need defer=True."
+    )
+    print(
+        f"  [PASS] memo_writer is the only fan-in node "
+        f"(predecessors: {fan_in_nodes['memo_writer']})"
+    )
+
+
+def test_graph_still_compiles() -> None:
+    """Compile the graph with an in-memory checkpointer to catch edge/node errors."""
+    from langgraph.checkpoint.memory import MemorySaver
+    from backend.graph import _builder
+
+    g = _builder.compile(checkpointer=MemorySaver())
+    node_names = set(g.nodes.keys()) - {"__start__"}
+    expected = {"supervisor", "data_agent", "quant_agent", "sentiment_agent",
+                "risk_agent", "memo_writer", "self_critic"}
+    assert node_names == expected, (
+        f"FAIL: compiled graph nodes {node_names} != expected {expected}"
+    )
+    print(f"  [PASS] graph compiles OK with MemorySaver ({len(expected)} nodes)")
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -330,6 +407,12 @@ if __name__ == "__main__":
 
     print("\n-- self_critic.run() (async) --")
     asyncio.run(_run_async_tests())
+
+    print("\n-- Graph structure: defer=True fan-in fix --")
+    test_memo_writer_deferred()
+    test_self_critic_not_deferred()
+    test_only_memo_writer_is_fan_in()
+    test_graph_still_compiles()
 
     print("\n" + "=" * 60)
     print("ALL tests passed")

@@ -107,7 +107,12 @@ _builder.add_node("data_agent",       data_agent.run)
 _builder.add_node("quant_agent",      quant_agent.run)
 _builder.add_node("sentiment_agent",  sentiment_agent.run)
 _builder.add_node("risk_agent",       risk_agent.run)
-_builder.add_node("memo_writer",      memo_writer.run)
+# defer=True: memo_writer has two predecessors that arrive in different supersteps
+# (sentiment_agent at depth N+2, risk_agent at depth N+3 via quant_agent).
+# Without defer, LangGraph fires memo_writer once per predecessor as each
+# superstep settles, causing two LLM calls per run.  defer=True holds the node
+# until ALL predecessors in the current execution have completed.
+_builder.add_node("memo_writer",      memo_writer.run, defer=True)
 _builder.add_node("self_critic",      self_critic.run)
 
 # Sequential spine
