@@ -1,0 +1,66 @@
+{
+  "_note": "8 hand-verified tickers sized for Alpha Vantage 25-req/day budget (~3 AV calls per ticker = ~24 total, leaving 1 for ad-hoc testing).",
+  "_tolerance": "expected_ratios compared with 2% relative tolerance; omit fields not verifiable from a primary source.",
+  "eval_set": [
+    {
+      "ticker": "AAPL",
+      "_source": "Apple 10-K FY2024 (fiscal year ended 28 Sep 2024)",
+      "expected_ratios": {
+        "gross_margin": 0.462,
+        "net_margin":   0.240
+      },
+      "expected_flags": []
+    },
+    {
+      "ticker": "MSFT",
+      "_source": "Microsoft 10-K FY2024 (fiscal year ended 30 Jun 2024)",
+      "expected_ratios": {
+        "gross_margin": 0.698,
+        "net_margin":   0.360
+      },
+      "expected_flags": []
+    },
+    {
+      "ticker": "GOOGL",
+      "_source": "Alphabet 10-K FY2024 (fiscal year ended 31 Dec 2024); revenue $350.0B, gross profit $201.5B, net income $100.1B",
+      "expected_ratios": {
+        "gross_margin": 0.576,
+        "net_margin":   0.286
+      },
+      "expected_flags": []
+    },
+    {
+      "ticker": "NVDA",
+      "_source": "NVIDIA 10-K FY2025 (fiscal year ended 26 Jan 2025); revenue $130.5B, gross profit $97.9B, net income $72.9B",
+      "expected_ratios": {
+        "gross_margin": 0.750,
+        "net_margin":   0.558
+      },
+      "expected_flags": []
+    },
+    {
+      "ticker": "BA",
+      "_source": "Boeing 10-K FY2024. Long-term debt ~$54B (up from ~$10B in 2018), but stockholders equity has been deeply negative since 2020 (~-$23B in FY2024). detect_debt_spike() computes rate-of-change of D/E: with both prev and curr D/E negative, the delta divided by a positive absolute denominator yields a NEGATIVE percentage, so _severity() never triggers (it only fires on pct > 0.25). The detector is blind to worsening leverage once equity flips negative. No flags expected from any of the three detectors; used as an edge-case test for graceful handling of negative-equity D/E data.",
+      "expected_ratios": {},
+      "expected_flags": []
+    },
+    {
+      "ticker": "INTC",
+      "_source": "Intel 10-K FY2024. No revenue/margin detectors exist in the risk agent. D/E trajectory: equity shrank from ~$62B (FY2022) to ~$43B (FY2024) while long-term debt grew to ~$45B, pushing D/E from ~0.47 to ~1.05 — a 59% adjacent-year increase and ~123% multi-year increase, both above the 25%/50% thresholds in detect_debt_spike(). 'debt_spike' is a substring of both debt_spike_recent and debt_spike_multi_year.",
+      "expected_ratios": {},
+      "expected_flags": ["debt_spike"]
+    },
+    {
+      "ticker": "RIVN",
+      "_source": "Rivian 10-K FY2024. IPO Nov 2021; pre-profit EV maker with limited XBRL history. Tests graceful degradation: pe_ratio undefined (net loss), revenue_growth_yoy/qoq may be absent in early filings. No flags expected — pure degradation test.",
+      "expected_ratios": {},
+      "expected_flags": []
+    },
+    {
+      "ticker": "SMCI",
+      "_source": "Super Micro Computer. EY resigned as auditor Oct 2023; FY2024 10-K (year ended 30 Jun 2024) filed November 2024 after extended delays; that filing explicitly describes restatements of prior-period financials. The restatement detector uses \\brestate\\b regex, which matches 'restate', 'restated', 'restatement'. 'restatement' is a substring of the real flag name 'restatement'. Tests: XBRL staleness/gaps AND audit-language flag detection via the restatement category.",
+      "expected_ratios": {},
+      "expected_flags": ["restatement"]
+    }
+  ]
+}

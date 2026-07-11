@@ -98,17 +98,44 @@ def detect_debt_spike(ratio_history: list[dict]) -> list[dict]:
             "source_tool": "quant_agent.get_ratio_history",
         }
 
+    def _signs_differ(a: float, b: float) -> bool:
+        """True when a and b have opposite signs.
+
+        When D/E crosses zero between periods (positive equity → negative, or
+        vice versa), the percentage-change formula produces a large,
+        confidently-labelled but substantively meaningless number.  Skip the
+        percentage calculation entirely for such pairs.
+        """
+        return (a < 0) != (b < 0)
+
+    def _equity_sign_change_flag(label: str, prev: dict, curr: dict) -> dict:
+        return {
+            "flag": "equity_sign_change",
+            "severity": "medium",
+            "evidence": (
+                f"D/E crossed zero {label} "
+                f"({prev['period_end']}: {prev['debt_to_equity']:.4f} → "
+                f"{curr['period_end']}: {curr['debt_to_equity']:.4f}); "
+                "percentage-change comparison suppressed — D/E trend is "
+                "mathematically meaningless across an equity sign boundary."
+            ),
+            "source_tool": "quant_agent.get_ratio_history",
+        }
+
     # Recent: last two available annual filings
     recent_prev, recent_curr = usable[-2], usable[-1]
     if recent_prev["debt_to_equity"] != 0:
-        pct = (
-            (recent_curr["debt_to_equity"] - recent_prev["debt_to_equity"])
-            / abs(recent_prev["debt_to_equity"])
-        )
-        if _severity(pct):
-            flags.append(
-                _flag("debt_spike_recent", "year-over-year", recent_prev, recent_curr, pct)
+        if _signs_differ(recent_prev["debt_to_equity"], recent_curr["debt_to_equity"]):
+            flags.append(_equity_sign_change_flag("year-over-year", recent_prev, recent_curr))
+        else:
+            pct = (
+                (recent_curr["debt_to_equity"] - recent_prev["debt_to_equity"])
+                / abs(recent_prev["debt_to_equity"])
             )
+            if _severity(pct):
+                flags.append(
+                    _flag("debt_spike_recent", "year-over-year", recent_prev, recent_curr, pct)
+                )
 
     # Multi-year: most recent vs ~4 annual filings back; skip when it duplicates recent
     multi_prev_idx = max(0, len(usable) - 5)
@@ -116,14 +143,17 @@ def detect_debt_spike(ratio_history: list[dict]) -> list[dict]:
     if multi_prev["period_end"] != recent_prev["period_end"]:
         multi_curr = usable[-1]
         if multi_prev["debt_to_equity"] != 0:
-            pct = (
-                (multi_curr["debt_to_equity"] - multi_prev["debt_to_equity"])
-                / abs(multi_prev["debt_to_equity"])
-            )
-            if _severity(pct):
-                flags.append(
-                    _flag("debt_spike_multi_year", "over multi-year period", multi_prev, multi_curr, pct)
+            if _signs_differ(multi_prev["debt_to_equity"], multi_curr["debt_to_equity"]):
+                flags.append(_equity_sign_change_flag("over multi-year period", multi_prev, multi_curr))
+            else:
+                pct = (
+                    (multi_curr["debt_to_equity"] - multi_prev["debt_to_equity"])
+                    / abs(multi_prev["debt_to_equity"])
                 )
+                if _severity(pct):
+                    flags.append(
+                        _flag("debt_spike_multi_year", "over multi-year period", multi_prev, multi_curr, pct)
+                    )
 
     return flags
 

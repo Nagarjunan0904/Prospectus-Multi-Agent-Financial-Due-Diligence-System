@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import uuid
+from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 
@@ -325,29 +326,35 @@ async def get_memo(run_id: str) -> dict[str, Any]:
     return _build_response(run_id, snapshot.values).model_dump()
 
 
+_EVAL_RESULTS_PATH = Path(__file__).parent.parent.parent / "data" / "eval_results.json"
+
+_EVAL_STUB: dict[str, Any] = {
+    "run_timestamp":         None,
+    "tickers_evaluated":     0,
+    "ratio_accuracy":        None,
+    "avg_citation_coverage": None,
+    "retry_rate":            None,
+    "red_flag_precision":    None,
+    "red_flag_recall":       None,
+    "latency_p50":           None,
+    "latency_p95":           None,
+    "per_ticker":            {},
+}
+
+
 @app.get("/eval")
 async def eval_stats() -> dict[str, Any]:
     """
-    Evaluation metrics endpoint (Phase 6 stub).
+    Evaluation metrics from the last offline eval run.
 
-    When Phase 6 (golden-set eval pipeline) is implemented, this endpoint will:
-      1. Load (ticker, expected_output) pairs from a golden-set config file.
-      2. Run the graph against each ticker and score the resulting memo for
-         precision, recall, and citation_coverage.
-      3. Return aggregated latency percentiles and quality metrics.
+    Returns the content of data/eval_results.json if it exists (written by
+    backend/evaluation/eval_pipeline.py), otherwise returns a zero-valued
+    stub with the same schema so callers never crash on missing fields.
 
-    Until then, returns zeroed values with the correct shape so the frontend
-    can render the eval tab without crashing.
+    Run the eval manually:
+        python backend/evaluation/eval_pipeline.py
+        python backend/evaluation/eval_pipeline.py --tickers NVDA MSFT
     """
-    return {
-        "total_runs":            0,
-        "avg_latency_ms":        None,
-        "p50_latency_ms":        None,
-        "p95_latency_ms":        None,
-        "avg_citation_coverage": None,
-        "avg_completeness":      None,
-        "note": (
-            "Phase 6 golden-set eval pipeline not yet implemented. "
-            "This endpoint will return real metrics once it exists."
-        ),
-    }
+    if _EVAL_RESULTS_PATH.exists():
+        return json.loads(_EVAL_RESULTS_PATH.read_text(encoding="utf-8"))
+    return _EVAL_STUB
