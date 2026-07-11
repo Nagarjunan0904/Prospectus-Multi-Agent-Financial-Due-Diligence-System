@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+@theme {
+  /* Typography */
+  --font-display: 'Space Grotesk', sans-serif;
+  --font-body:    'IBM Plex Sans', sans-serif;
+  --font-sans:    'IBM Plex Sans', sans-serif;
+  --font-mono:    'IBM Plex Mono', monospace;
+
+  /* Brand palette */
+  --color-ink:      #0B1220;
+  --color-surface:  #141B2D;
+  --color-line:     #26324A;
+  --color-ink-text: #E8ECF6;
+  --color-muted:    #8E98B0;
+  --color-brass:    #C6A15B;
+  --color-mint:     #3FB984;
+  --color-rose:     #E2596B;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-ink);
+    color: var(--color-ink-text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* ── Pipeline trace animations ───────────────────────────────────────── */
+@keyframes dot-pulse {
+  0%   { box-shadow: 0 0 0 0   rgba(198, 161, 91, 0.8); transform: scale(1);    }
+  45%  { box-shadow: 0 0 0 6px rgba(198, 161, 91, 0.2); transform: scale(1.3); }
+  100% { box-shadow: 0 0 0 0   rgba(198, 161, 91, 0);   transform: scale(1);    }
+}
+
+@keyframes line-draw {
+  from { transform: scaleY(0); }
+  to   { transform: scaleY(1); }
+}
+
+.animate-dot-pulse {
+  animation: dot-pulse 600ms ease-out forwards;
+}
+
+.animate-line-draw {
+  animation: line-draw 500ms ease-out forwards;
+  transform-origin: top center;
+}
+
+/* Claim-click scroll highlight */
+.highlight-node {
+  box-shadow: 0 0 0 2px var(--color-brass);
+  border-radius: 0.5rem;
+  transition: box-shadow 0.3s ease;
+}
+
+/* Input focus glow */
+.input-glow:focus {
+  outline: none;
+  box-shadow:
+    0 0 0 1px var(--color-brass),
+    0 0 14px rgba(198, 161, 91, 0.18);
+  border-color: var(--color-brass);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-dot-pulse,
+  .animate-line-draw {
+    animation: none !important;
+    transform: none !important;
+  }
+}
