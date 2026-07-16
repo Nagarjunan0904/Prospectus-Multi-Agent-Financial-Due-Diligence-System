@@ -42,6 +42,9 @@ from pydantic import BaseModel
 
 load_dotenv()
 
+from backend._platform import apply_windows_event_loop_fix  # noqa: E402
+apply_windows_event_loop_fix()
+
 from backend.graph import make_graph  # noqa: E402 — must follow load_dotenv()
 
 _log = logging.getLogger(__name__)

@@ -26,10 +26,13 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
-from dotenv import load_dotenv          # noqa: E402
-load_dotenv(ROOT / ".env")              # must precede backend imports
+from dotenv import load_dotenv                                   # noqa: E402
+load_dotenv(ROOT / ".env")                                       # must precede backend imports
 
-from backend.graph import make_graph    # noqa: E402
+from backend._platform import apply_windows_event_loop_fix       # noqa: E402
+apply_windows_event_loop_fix()
+
+from backend.graph import make_graph                             # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -95,7 +98,7 @@ async def run_eval(tickers_subset: list[str] | None = None) -> None:
         if not golden:
             sys.exit(
                 f"None of {tickers_subset} found in {TICKERS_PATH}. "
-                f"Available: {[e['ticker'] for e in raw if isinstance(raw, list) else raw['eval_set']]}"
+                f"Available: {[e['ticker'] for e in (raw if isinstance(raw, list) else raw['eval_set'])]}"
             )
 
     run_ts = datetime.now(timezone.utc).isoformat()

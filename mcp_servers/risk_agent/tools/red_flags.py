@@ -242,8 +242,11 @@ _AUDIT_CATEGORIES: list[tuple[str, str, list[re.Pattern[str]]]] = [
         "restatement",
         "medium",
         [
-            re.compile(r"\brestate\b", re.IGNORECASE),
-            re.compile(r"\brestatement of\b", re.IGNORECASE),
+            # Shared root "restate" + optional suffix covers restate, restated,
+            # restatement, restatements in one pattern — the bare \brestate\b
+            # used previously missed "restated"/"restatement" entirely because
+            # the trailing \b fails partway through those longer words.
+            re.compile(r"\brestate(?:d|ments?)?\b", re.IGNORECASE),
         ],
     ),
 ]

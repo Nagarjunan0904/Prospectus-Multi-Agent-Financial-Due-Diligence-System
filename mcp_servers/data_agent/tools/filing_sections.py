@@ -84,7 +84,61 @@ _ITEM_BOUNDARY = re.compile(
 _MAX_CHARS = 32_000
 
 _RISK_FACTORS_PATTERN = r'Item\s+1A\.?\s*Risk\s+Factors'
-_MDNA_PATTERN = r'Item\s+7\.?\s*Management[’\'s]*\s+Discussion'
+# Fallback for filers whose body section heading omits the "Item 1A" prefix.
+# Matches "Risk Factors" as a standalone line NOT followed by a bare page number
+# (running page header/footer or TOC entry uses that format — e.g. INTC).
+_RISK_FACTORS_FALLBACK = r'(?m)^[ \t]*Risk[ \t]+Factors[ \t]*$(?!\n[ \t]*\d{1,4}[ \t]*(?:\n|$))'
+_MDNA_PATTERN = "Item\\s+7\\.?\\s*Management(?:[‘’']s)?\\s+Discussion"
+# Fallback for filers (e.g. INTC) where "Item 7" is a bare cross-reference table
+# rather than a section with inline narrative.  Matches the standalone body heading
+# without requiring the "Item 7" prefix.  Used with toc_page_skip=True in
+# _do_extract to skip the identically-worded TOC entry (recognised by the burst of
+# bare page-number lines immediately after the heading).
+_MDNA_FALLBACK = "(?m)^Management(?:[‘’']s)?\\s+Discussion\\s+and\\s+Analysis"
+
+# Detects bare page numbers in a TOC sub-listing: "\n21\n", "\n105\n", etc.
+# Three or more such tokens in the first 400 chars after a heading conclusively
+# identifies the match as a table-of-contents entry rather than real body text.
+_PAGE_NUM = re.compile(r"\n\d{1,4}\n")
+
+# Running page-header pattern: "Risk Factors" on one line, bare page number on the
+# next.  Some filers (e.g. INTC) repeat this at the top of every page within the
+# section; counting ≥2 such headers signals a running-header filer.
+_RF_RUNNING_HEADER = re.compile(
+    r'^[ \t]*Risk[ \t]+Factors[ \t]*$\n[ \t]*\d{1,4}[ \t]*$',
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _rf_smart_end(text: str, start: int, default_end: int) -> int:
+    """Refine the Risk Factors end boundary for running-header filers (e.g. INTC).
+
+    When a filer repeats "Risk Factors / {page_num}" at the top of every page
+    within the section, the true section end is the first non-RF standalone
+    heading that appears after the LAST such running header — not the much-later
+    Item boundary in the cross-reference index.
+
+    Returns ``default_end`` unchanged when fewer than 2 running headers are
+    detected (normal filer — existing Item-boundary logic is sufficient).
+    """
+    headers = list(_RF_RUNNING_HEADER.finditer(text, start, default_end))
+    if len(headers) < 2:
+        return default_end
+
+    scan_from = headers[-1].end()
+
+    # First standalone heading-like line that is NOT "Risk Factors" and NOT a
+    # bare digit.  Minimum 7 chars total (A + a + 5 more) filters out "None".
+    _next_heading = re.compile(
+        r'^[ \t]*'
+        r'(?!Risk[ \t]+Factors[ \t]*$)'   # exclude "Risk Factors" itself
+        r'(?!\d{1,4}[ \t]*$)'             # exclude bare page numbers
+        r'([A-Z][A-Za-z][^\n]{5,80})'     # title-like text, 7–82 chars
+        r'[ \t]*$',
+        re.MULTILINE,
+    )
+    m = _next_heading.search(text, scan_from)
+    return m.start() if m else default_end
 
 
 # ---------------------------------------------------------------------------
@@ -167,12 +221,43 @@ async def _primary_doc_from_index(cik_int: str, acc_nodash: str) -> str:
 
 
 def _do_extract(
-    html: str, item_pattern: str, accession_number: str, *, truncate: bool
+    html: str,
+    item_pattern: str,
+    accession_number: str,
+    *,
+    truncate: bool,
+    smart_rf_end: bool = False,
+    min_body_len: int = 200,
+    toc_page_skip: bool = False,
 ) -> str:
-    """Core extraction: strip noise, locate section, optionally truncate."""
+    """Core extraction: strip noise, locate section, optionally truncate.
+
+    min_body_len: skip matches whose body (text to the next Item boundary) is
+        shorter than this threshold — filters out TOC one-liners and short
+        cross-reference tables.  Default 200 preserves legacy behaviour.
+    toc_page_skip: when True, additionally skip matches where the 400 chars
+        immediately after the heading contain ≥3 bare page-number lines
+        (``\\n<digit>\\n``), which is the signature of a TOC sub-listing rather
+        than real section prose.
+    """
     soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "table"]):
+    for tag in soup(["script", "style"]):
         tag.decompose()
+
+    # Unwrap inline elements so mid-word splits caused by adjacent inline tags
+    # (e.g. MSFT: <span>RIS</span><span>K</span>) don't produce \n mid-word
+    # when get_text(separator="\n") is called.  smooth() merges the adjacent
+    # NavigableStrings that unwrap() leaves behind.
+    for tag in soup.find_all(["a", "span", "b", "i", "em", "strong",
+                               "u", "sub", "sup", "small", "font"]):
+        tag.unwrap()
+    soup.smooth()
+
+    # Unwrap table structure instead of decompose: some filers (e.g. INTC) put
+    # section headings inside layout <table> elements; decompose() would silently
+    # delete those headings and make the primary pattern fail.
+    for tag in soup.find_all(["table", "thead", "tbody", "tfoot", "tr", "th", "td"]):
+        tag.unwrap()
 
     raw = soup.get_text(separator="\n")
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
@@ -180,7 +265,7 @@ def _do_extract(
 
     pat = re.compile(item_pattern, re.IGNORECASE)
 
-    # Walk matches; skip TOC entries (too short to be the real section body).
+    # Walk matches; skip TOC entries and cross-reference fragments.
     pos = 0
     while True:
         m = pat.search(text, pos)
@@ -188,9 +273,18 @@ def _do_extract(
             raise SectionNotFoundError(item_pattern, accession_number)
         nxt = _ITEM_BOUNDARY.search(text, m.end() + 1)
         end = nxt.start() if nxt else len(text)
-        if end - m.start() > 200:   # real section, not a one-liner TOC link
-            break
+        if end - m.start() > min_body_len:
+            if not toc_page_skip:
+                break
+            # Skip matches whose immediate content is a TOC sub-listing
+            # (burst of bare page-number lines right after the heading).
+            sample = text[m.end():min(m.end() + 400, end)]
+            if len(_PAGE_NUM.findall(sample)) < 3:
+                break
         pos = m.end()
+
+    if smart_rf_end:
+        end = _rf_smart_end(text, m.start(), end)
 
     section = text[m.start():end].strip()
 
@@ -275,8 +369,9 @@ def extract_section(
 ) -> str:
     """Locate *item_pattern* in *html* and return its text, capped at ~8 000 tokens.
 
-    Strips ``<table>``, ``<script>``, and ``<style>`` tags before extracting.
-    Collapses blank lines and leading/trailing whitespace.
+    Decomposes ``<script>`` and ``<style>`` tags; unwraps inline tags and table
+    structure tags so text content is preserved.  Collapses blank lines and
+    leading/trailing whitespace.
     Raises :exc:`SectionNotFoundError` if the pattern has no match.
     """
     return _do_extract(html, item_pattern, accession_number, truncate=True)
@@ -289,19 +384,52 @@ async def get_full_section(
 
     Fetches and caches the document via :func:`get_filing_document`, then
     extracts without the 8 000-token cap applied by :func:`extract_section`.
+
+    Applies the same TOC-skip protection as :func:`get_mdna` /
+    :func:`get_risk_factors` by default (min_body_len=1_000, toc_page_skip=True)
+    rather than as an opt-in — callers passing a fallback-style pattern (e.g.
+    :data:`_MDNA_FALLBACK`) get the real section body instead of silently
+    landing on a decoy front-matter TOC block that happens to match the same
+    heading wording (see INTC's Item 7).
+
     Raises :exc:`SectionNotFoundError` if *item_pattern* has no match.
     """
     html = await get_filing_document(cik, accession_number)
-    return _do_extract(html, item_pattern, accession_number, truncate=False)
+    return _do_extract(
+        html, item_pattern, accession_number,
+        truncate=False, min_body_len=1_000, toc_page_skip=True,
+    )
 
 
 async def get_risk_factors(cik: str, accession: str) -> str:
     """Return Item 1A (Risk Factors), capped at ~8 000 tokens."""
     html = await get_filing_document(cik, accession)
-    return extract_section(html, _RISK_FACTORS_PATTERN, accession)
+    try:
+        return _do_extract(html, _RISK_FACTORS_PATTERN, accession, truncate=True)
+    except SectionNotFoundError:
+        # Fallback for filers (e.g. INTC) whose body section heading is just
+        # "Risk Factors" on a standalone line without the "Item 1A" prefix.
+        # smart_rf_end=True enables running-header-aware end detection so the
+        # extraction stops at the real section boundary rather than the
+        # cross-reference index at the end of the document.
+        return _do_extract(
+            html, _RISK_FACTORS_FALLBACK, accession,
+            truncate=True, smart_rf_end=True,
+        )
 
 
 async def get_mdna(cik: str, accession: str) -> str:
     """Return Item 7 (MD&A), capped at ~8 000 tokens."""
     html = await get_filing_document(cik, accession)
-    return extract_section(html, _MDNA_PATTERN, accession)
+    try:
+        # min_body_len=1_000 rejects cross-reference tables (e.g. INTC's 221-char
+        # Item 7 pointer) that slip past the default 200-char TOC-skip threshold.
+        return _do_extract(html, _MDNA_PATTERN, accession,
+                           truncate=True, min_body_len=1_000)
+    except SectionNotFoundError:
+        # Fallback for filers (e.g. INTC) where Item 7 is a bare page-reference
+        # table — the real MD&A prose appears under a standalone heading without
+        # the "Item 7" prefix.  toc_page_skip=True skips the TOC entry that uses
+        # the same wording but lists sub-section page numbers immediately after.
+        return _do_extract(html, _MDNA_FALLBACK, accession,
+                           truncate=True, min_body_len=1_000, toc_page_skip=True)

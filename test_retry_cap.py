@@ -31,8 +31,8 @@ from __future__ import annotations
 import asyncio
 import sys
 
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+from backend._platform import apply_windows_event_loop_fix
+apply_windows_event_loop_fix()
 
 # ---------------------------------------------------------------------------
 # Test 1-3: _route_self_critic cap enforcement (pure function, no I/O)

@@ -48,8 +48,8 @@ import sys
 
 from dotenv import load_dotenv
 
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+from backend._platform import apply_windows_event_loop_fix
+apply_windows_event_loop_fix()
 
 load_dotenv()
 

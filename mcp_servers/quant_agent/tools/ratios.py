@@ -224,6 +224,75 @@ def _latest_revenue(company_facts: dict, form: str | None = None) -> float | Non
     return None
 
 
+def _annual_10k_entries(
+    company_facts: dict,
+    concept: str,
+    namespace: str = "us-gaap",
+    unit: str = "USD",
+) -> list[dict]:
+    """10-K entries spanning approximately one full fiscal year (330-370 days), newest-first."""
+    result = []
+    for e in _get_entries(company_facts, concept, namespace=namespace, unit=unit, form="10-K"):
+        start, end = e.get("start"), e.get("end")
+        if not start or not end:
+            continue
+        try:
+            days = (datetime.fromisoformat(end) - datetime.fromisoformat(start)).days
+        except ValueError:
+            continue
+        if 330 <= days <= 370:
+            result.append(e)
+    return result
+
+
+def _entry_at_end(
+    company_facts: dict,
+    concept: str,
+    end_date: str,
+    namespace: str = "us-gaap",
+    unit: str = "USD",
+) -> float | None:
+    """Return the value for *concept* at a specific period-end date (10-K only).
+
+    When multiple entries share the same end-date (e.g. a full-year figure and
+    a Q4-only figure both tagged end=2025-09-27), prefers the approximately
+    annual one (330-370 days).  Among ties, prefers the most recently filed.
+    """
+    candidates = [
+        e for e in _get_entries(company_facts, concept, namespace=namespace, unit=unit, form="10-K")
+        if e["end"] == end_date
+    ]
+    if not candidates:
+        return None
+    annual = []
+    for e in candidates:
+        start = e.get("start")
+        if start:
+            try:
+                days = (datetime.fromisoformat(end_date) - datetime.fromisoformat(start)).days
+                if 330 <= days <= 370:
+                    annual.append(e)
+            except ValueError:
+                pass
+    pool = annual if annual else candidates
+    pool.sort(key=lambda e: e.get("filed", ""), reverse=True)
+    return pool[0]["val"]
+
+
+def _revenue_at_end(company_facts: dict, end_date: str) -> float | None:
+    """Try revenue concepts in priority order; return the value at *end_date*."""
+    for concept in (
+        "Revenues",
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "SalesRevenueNet",
+        "RevenueFromContractWithCustomerIncludingAssessedTax",
+    ):
+        val = _entry_at_end(company_facts, concept, end_date)
+        if val is not None:
+            return val
+    return None
+
+
 # ---------------------------------------------------------------------------
 # compute_ratios
 # ---------------------------------------------------------------------------
@@ -321,54 +390,85 @@ async def compute_ratios(
         ratios["current_ratio"] = None
         warnings.append(f"current_ratio: {exc}")
 
-    # ── Margins (annual 10-K) ─────────────────────────────────────────────────
+    # ── Margins (annual 10-K, all concepts anchored to the same fiscal period) ──
+    #
+    # Bug fixed: previously each concept independently called _latest(..., form="10-K"),
+    # which picks the entry with the latest `end` date for THAT concept alone.
+    # Companies like AAPL and MSFT stopped tagging `Revenues` with newer filings
+    # (switching to RevenueFromContractWithCustomerExcludingAssessedTax), so
+    # `_latest_revenue` returned a figure from 2018 (AAPL) or 2010 (MSFT) while
+    # OperatingIncomeLoss returned the current fiscal year — producing ratios > 100%.
+    #
+    # Fix: anchor all four concepts to the same fiscal-year `end` date, determined
+    # by the most recent annual OperatingIncomeLoss entry (the most reliably current
+    # concept).  _entry_at_end() then picks the value at that exact date, preferring
+    # approximately annual durations to avoid mixing Q4-only entries with full-year ones.
     try:
-        revenues = _latest_revenue(company_facts, form="10-K")
-        if not revenues:
+        # Establish anchor: most recent full-fiscal-year period from OperatingIncomeLoss
+        anchor_end: str | None = None
+        for _ac in ("OperatingIncomeLoss", "NetIncomeLoss"):
+            _ae = _annual_10k_entries(company_facts, _ac)
+            if _ae:
+                anchor_end = _ae[0]["end"]
+                break
+
+        if not anchor_end:
             for k in ("gross_margin", "operating_margin", "net_margin"):
                 ratios[k] = None
-            warnings.append("margins: Revenues absent or zero in 10-K filings")
+            warnings.append(
+                "margins: cannot establish anchor fiscal period "
+                "(OperatingIncomeLoss and NetIncomeLoss both absent in annual 10-K)"
+            )
         else:
-            # Gross margin
-            try:
-                cogs = (
-                    _latest(company_facts, "CostOfRevenue", form="10-K")
-                    or _latest(company_facts, "CostOfGoodsAndServicesSold", form="10-K")
+            revenues = _revenue_at_end(company_facts, anchor_end)
+            if not revenues:
+                for k in ("gross_margin", "operating_margin", "net_margin"):
+                    ratios[k] = None
+                warnings.append(
+                    f"margins: Revenues absent or zero for anchor period {anchor_end}"
                 )
-                if cogs is None:
-                    ratios["gross_margin"] = None
-                    warnings.append(
-                        "gross_margin: CostOfRevenue absent (common for software/services)"
+            else:
+                # Gross margin
+                try:
+                    cogs = (
+                        _entry_at_end(company_facts, "CostOfRevenue", anchor_end)
+                        or _entry_at_end(company_facts, "CostOfGoodsAndServicesSold", anchor_end)
                     )
-                else:
-                    ratios["gross_margin"] = round((revenues - cogs) / revenues, 4)
-            except Exception as exc:
-                ratios["gross_margin"] = None
-                warnings.append(f"gross_margin: {exc}")
+                    if cogs is None:
+                        ratios["gross_margin"] = None
+                        warnings.append(
+                            "gross_margin: CostOfRevenue absent (common for software/services)"
+                        )
+                    else:
+                        ratios["gross_margin"] = round((revenues - cogs) / revenues, 4)
+                except Exception as exc:
+                    ratios["gross_margin"] = None
+                    warnings.append(f"gross_margin: {exc}")
 
-            # Operating margin
-            try:
-                op_inc = _latest(company_facts, "OperatingIncomeLoss", form="10-K")
-                if op_inc is None:
+                # Operating margin
+                try:
+                    op_inc = _entry_at_end(company_facts, "OperatingIncomeLoss", anchor_end)
+                    if op_inc is None:
+                        ratios["operating_margin"] = None
+                        warnings.append("operating_margin: OperatingIncomeLoss absent")
+                    else:
+                        ratios["operating_margin"] = round(op_inc / revenues, 4)
+                except Exception as exc:
                     ratios["operating_margin"] = None
-                    warnings.append("operating_margin: OperatingIncomeLoss absent")
-                else:
-                    ratios["operating_margin"] = round(op_inc / revenues, 4)
-            except Exception as exc:
-                ratios["operating_margin"] = None
-                warnings.append(f"operating_margin: {exc}")
+                    warnings.append(f"operating_margin: {exc}")
 
-            # Net margin
-            try:
-                net_inc = _latest(company_facts, "NetIncomeLoss", form="10-K")
-                if net_inc is None:
+                # Net margin
+                try:
+                    net_inc = _entry_at_end(company_facts, "NetIncomeLoss", anchor_end)
+                    if net_inc is None:
+                        ratios["net_margin"] = None
+                        warnings.append("net_margin: NetIncomeLoss absent")
+                    else:
+                        ratios["net_margin"] = round(net_inc / revenues, 4)
+                except Exception as exc:
                     ratios["net_margin"] = None
-                    warnings.append("net_margin: NetIncomeLoss absent")
-                else:
-                    ratios["net_margin"] = round(net_inc / revenues, 4)
-            except Exception as exc:
-                ratios["net_margin"] = None
-                warnings.append(f"net_margin: {exc}")
+                    warnings.append(f"net_margin: {exc}")
+
     except Exception as exc:
         for k in ("gross_margin", "operating_margin", "net_margin"):
             ratios[k] = None
