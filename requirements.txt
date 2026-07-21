@@ -29,3 +29,6 @@ pydantic==2.13.4
 # --- Utilities ---
 python-dotenv==1.2.2
 pytest==9.1.1
+
+# --- Process management ---
+supervisor
