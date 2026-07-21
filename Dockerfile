@@ -7,5 +7,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir torch==2.12.1 --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
 EXPOSE 8000
-CMD ["supervisord", "-c", "supervisord.conf"]
+CMD ["./entrypoint.sh"]
