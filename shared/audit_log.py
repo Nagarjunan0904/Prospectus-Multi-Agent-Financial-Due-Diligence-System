@@ -9,11 +9,15 @@ calls can be correlated without storing potentially-sensitive arguments.
 """
 import hashlib
 import json
+import logging
 from datetime import datetime
 
 from sqlalchemy import Column, DateTime, Float, Integer, String
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 
 from shared.db import Base, SessionLocal, engine
+
+logger = logging.getLogger(__name__)
 
 
 class AuditLog(Base):
@@ -28,7 +32,17 @@ class AuditLog(Base):
     status = Column(String(16), nullable=True)  # 'success' | 'error'
 
 
-Base.metadata.create_all(bind=engine)
+# All 5 processes (4 MCP agents + api) import this module at startup and each
+# hit this line within ~1s of each other under supervisord — unlike local dev
+# where terminals were started by hand one at a time. Postgres only lets one
+# CREATE TABLE / CREATE SEQUENCE win; the losers get IntegrityError (duplicate
+# key on the *_id_seq row in pg_class) or ProgrammingError ("already exists").
+# Either way the table now exists, which is the desired end state, so it's
+# safe to swallow and move on rather than crash-and-let-autorestart-save-us.
+try:
+    Base.metadata.create_all(bind=engine)
+except (IntegrityError, ProgrammingError) as exc:
+    logger.debug("audit_log table already created by another process: %s", exc)
 
 
 def make_params_hash(kwargs: dict) -> str:
